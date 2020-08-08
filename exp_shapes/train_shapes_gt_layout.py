@@ -1,5 +1,7 @@
 from __future__ import absolute_import, division, print_function
 
+import random
+import pickle
 import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument('--gpu_id', type=int, default=0)
@@ -40,7 +42,7 @@ weight_decay = 5e-4
 max_grad_l2_norm = 10
 max_iter = 40000
 snapshot_interval = 10000
-exp_name = "shapes_gt_layout"
+exp_name = "shapes_gt_layout_" + input("Experiment identifying numbers:")
 snapshot_dir = './exp_shapes/tfmodel/%s/' % exp_name
 
 # Log params
@@ -112,6 +114,10 @@ for n_q in range(num_questions):
 image_mean = np.load(image_mean_file)
 image_array = (training_images - image_mean).astype(np.float32)
 vqa_label_array = np.array(training_labels, np.int32)
+
+#setting random seed
+np.random.seed(int(time.time()))
+tf.set_random_seed(int(time.time()))
 
 # Network inputs
 text_seq_batch = tf.placeholder(tf.int32, [None, None])
@@ -187,6 +193,14 @@ sess.run(tf.global_variables_initializer())
 avg_accuracy = 0
 accuracy_decay = 0.99
 
+#varaible access
+prefix = 'neural_module_network/layout_execution/'
+mods = ['TransformModule', 'FindModule', 'AnswerModule']
+
+swaps = dict.fromkeys(mods)
+old = dict.fromkeys(mods, 0)
+num_swaps = int(input("Number of swaps?"))
+
 for n_iter in range(max_iter):
     n_begin = int((n_iter % num_batches)*N)
     n_end = int(min(n_begin+N, num_questions))
@@ -213,6 +227,26 @@ for n_iter in range(max_iter):
     # Build TensorFlow Fold input for NMN
     expr_feed = compiler.build_feed_dict(expr_list)
     expr_feed[vqa_label_batch] = labels
+    
+    #initialization for swapping    
+    if num_swaps != 0 and n_iter == 0:
+        for mod in mods:
+            swaps[mod] = []
+            for i in range(num_swaps):
+                d = {}
+                for x in tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope = prefix + mod):
+                    y = x.eval(session = sess)
+                    if "bias" in x.name:
+                        d[x.name] = np.zeros(y.shape)
+                    elif "Adam" in x.name:
+                        d[x.name] = np.zeros(y.shape)
+                    else:
+                        var = tf.Variable(tf.contrib.layers.xavier_initializer()(shape = y.shape))
+                        sess.run(tf.local_variables_initializer())
+                        sess.run(tf.global_variables_initializer())
+                        y = var.eval(session = sess)
+                        d[x.name] = np.array(y)
+                swaps[mod] += [d]
 
     # Part 2: Run NMN and learning steps
     scores_val, avg_sample_loss_val, _ = sess.partial_run(
@@ -240,3 +274,17 @@ for n_iter in range(max_iter):
         snapshot_file = os.path.join(snapshot_dir, "%08d" % (n_iter+1))
         snapshot_saver.save(sess, snapshot_file, write_meta_graph=False)
         print('snapshot saved to ' + snapshot_file)
+    
+    
+    #better swapping
+    if num_swaps != 0 and n_iter % 10 == 0: # and n_iter <= 30000:
+        for mod in mods:
+            new = random.randint(0, num_swaps - 1)
+            for x in tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope = prefix + mod):
+                y = x.eval(session = sess)
+                swaps[mod][old[mod]][x.name] = y
+                x.load(swaps[mod][new][x.name], session = sess)
+            old[mod] = new
+            
+with open(os.path.join(snapshot_dir, "all_swaps.txt"), "wb") as f:
+    pickle.dump(swaps, f)
