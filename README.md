@@ -14,7 +14,7 @@ This repository contains the code for the following paper:
 
 Project Page: http://ronghanghu.com/n2nmn
 
-## Installation details
+## Installation
 
 1. Install Python 3 (Anaconda recommended: https://www.continuum.io/downloads).
 2. Install TensorFlow v1.0.0 (Note: newer or older versions of TensorFlow may fail to work due to incompatibility with TensorFlow Fold):  
