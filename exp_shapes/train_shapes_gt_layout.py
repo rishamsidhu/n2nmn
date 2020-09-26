@@ -1,6 +1,7 @@
 from __future__ import absolute_import, division, print_function
 
 import random
+import time
 import pickle
 import argparse
 parser = argparse.ArgumentParser()
@@ -52,7 +53,9 @@ log_dir = './exp_shapes/tb/%s/' % exp_name
 # Data files
 vocab_shape_file = './exp_shapes/data/vocabulary_shape.txt'
 vocab_layout_file = './exp_shapes/data/vocabulary_layout.txt'
-image_sets = ['train.large', 'train.med', 'train.small', 'train.tiny']
+#image_sets = ['train.large', 'train.med', 'train.small', 'train.tiny']
+#image_sets = ['train.nab.large', 'train.nab.med', 'train.nab.small', 'train.nab.tiny']
+image_sets = ['flip.train']
 training_text_files = './exp_shapes/shapes_dataset/%s.query_str.txt'
 training_image_files = './exp_shapes/shapes_dataset/%s.input.npy'
 training_label_files = './exp_shapes/shapes_dataset/%s.output'
@@ -180,6 +183,10 @@ log_writer = tf.summary.FileWriter(log_dir, tf.get_default_graph())
 loss_ph = tf.placeholder(tf.float32, [])
 entropy_ph = tf.placeholder(tf.float32, [])
 accuracy_ph = tf.placeholder(tf.float32, [])
+val_acc = tf.placeholder(tf.float32, [], name = "val_acc")
+tr_acc = tf.placeholder(tf.float32, [], name = "train_acc")
+tf.summary.scalar("training_accuracy", tr_acc)
+tf.summary.scalar("validation_accuracy", val_acc)
 tf.summary.scalar("avg_sample_loss", loss_ph)
 tf.summary.scalar("entropy", entropy_ph)
 tf.summary.scalar("avg_accuracy", accuracy_ph)
@@ -193,6 +200,40 @@ sess.run(tf.global_variables_initializer())
 avg_accuracy = 0
 accuracy_decay = 0.99
 
+#validation data
+validation_questions = []
+validation_labels = []
+validation_images_list = []
+validation_gt_layout_list = []
+
+for image_set in ['val']:
+    with open(training_text_files % image_set) as f:
+        validation_questions += [l.strip() for l in f.readlines()]
+    with open(training_label_files % image_set) as f:
+        validation_labels += [l.strip() == 'true' for l in f.readlines()]
+    validation_images_list.append(np.load(training_image_files % image_set))
+    with open(training_gt_layout_file % image_set) as f:
+        validation_gt_layout_list += json.load(f)
+
+num_val_questions = len(validation_questions)
+validation_images = np.concatenate(validation_images_list)
+
+num_val_batches = np.ceil(num_val_questions / N)
+
+validation_text_seq_array = np.zeros((T_encoder, num_val_questions), np.int32)
+validation_seq_length_array = np.zeros(num_val_questions, np.int32)
+validation_gt_layout_array = np.zeros((T_decoder, num_val_questions), np.int32)
+for n_q in range(num_val_questions):
+    tokens = validation_questions[n_q].split()
+    validation_seq_length_array[n_q] = len(tokens)
+    for t in range(len(tokens)):
+        validation_text_seq_array[t, n_q] = vocab_shape_dict[tokens[t]]
+    validation_gt_layout_array[:, n_q] = assembler.module_list2tokens(
+        validation_gt_layout_list[n_q], T_decoder)
+
+validation_image_array = (validation_images - image_mean).astype(np.float32)
+validation_vqa_label_array = np.array(validation_labels, np.int32)
+
 #varaible access
 prefix = 'neural_module_network/layout_execution/'
 mods = ['TransformModule', 'FindModule', 'AnswerModule']
@@ -200,6 +241,7 @@ mods = ['TransformModule', 'FindModule', 'AnswerModule']
 swaps = dict.fromkeys(mods)
 old = dict.fromkeys(mods, 0)
 num_swaps = int(input("Number of swaps?"))
+answer_accuracy = 0
 
 for n_iter in range(max_iter):
     n_begin = int((n_iter % num_batches)*N)
@@ -227,8 +269,8 @@ for n_iter in range(max_iter):
     # Build TensorFlow Fold input for NMN
     expr_feed = compiler.build_feed_dict(expr_list)
     expr_feed[vqa_label_batch] = labels
-    
-    #initialization for swapping    
+
+    #initialization for swapping
     if num_swaps != 0 and n_iter == 0:
         for mod in mods:
             swaps[mod] = []
@@ -247,6 +289,12 @@ for n_iter in range(max_iter):
                         y = var.eval(session = sess)
                         d[x.name] = np.array(y)
                 swaps[mod] += [d]
+        with open(os.path.join(snapshot_dir, "start_swaps.txt"), "wb") as f:
+            pickle.dump(swaps, f)
+        print("initial swaps saved to " + os.path.join(snapshot_dir, "start_swaps.txt"))
+        snapshot_file = os.path.join(snapshot_dir, "%08d" % (0))
+        snapshot_saver.save(sess, snapshot_file, write_meta_graph=False)
+        print('snapshot saved to ' + snapshot_file)
 
     # Part 2: Run NMN and learning steps
     scores_val, avg_sample_loss_val, _ = sess.partial_run(
@@ -258,6 +306,56 @@ for n_iter in range(max_iter):
                                       predictions == labels))
     avg_accuracy += (1-accuracy_decay) * (accuracy-avg_accuracy)
 
+    # validation once per epoch
+    if n_begin == 0:
+        answer_correct = 0
+        layout_correct = 0
+        layout_valid = 0
+
+        for v_iter in range(int(num_val_batches)):
+            v_begin = int((v_iter % num_val_batches)*N)
+            v_end = int(min(v_begin+N, num_val_questions))
+
+            # set up input and output tensors
+            h = sess.partial_run_setup(
+                [nmn3_model.predicted_tokens, scores],
+                [text_seq_batch, seq_length_batch, image_batch, gt_layout_batch,
+                 compiler.loom_input_tensor, expr_validity_batch])
+
+            # Part 0 & 1: Run Convnet and generate module layout
+            tokens = sess.partial_run(h, nmn3_model.predicted_tokens,
+                feed_dict={text_seq_batch: validation_text_seq_array[:, v_begin:v_end],
+                           seq_length_batch: validation_seq_length_array[v_begin:v_end],
+                           image_batch: validation_image_array[v_begin:v_end],
+                           gt_layout_batch: validation_gt_layout_array[:, v_begin:v_end]})
+
+            # compute the accuracy of the predicted layout
+            gt_tokens = validation_gt_layout_array[:, v_begin:v_end]
+            layout_correct += np.sum(np.all(np.logical_or(tokens == gt_tokens,
+                                                          gt_tokens == assembler.EOS_idx),
+                                            axis=0))
+
+            # Assemble the layout tokens into network structure
+            expr_list, expr_validity_array = assembler.assemble(tokens)
+            layout_valid += np.sum(expr_validity_array)
+            labels = validation_vqa_label_array[v_begin:v_end]
+            # Build TensorFlow Fold input for NMN
+            expr_feed = compiler.build_feed_dict(expr_list)
+            expr_feed[expr_validity_batch] = expr_validity_array
+
+            # Part 2: Run NMN and learning steps
+            scores_val = sess.partial_run(h, scores, feed_dict=expr_feed)
+
+            # compute accuracy
+            predictions = np.argmax(scores_val, axis=1)
+            answer_correct += np.sum(np.logical_and(expr_validity_array,
+                                                    predictions == labels))
+
+        answer_accuracy = answer_correct / num_val_questions
+        print("validation accuracy =", answer_accuracy)
+        #summary = sess.run(log_step, {val_acc : answer_accuracy})
+        #log_writer.add_summary(summary, n_iter)
+
     # Add to TensorBoard summary
     if n_iter % log_interval == 0 or (n_iter+1) == max_iter:
         print("iter = %d\n\tloss = %f, accuracy (cur) = %f, "
@@ -265,8 +363,10 @@ for n_iter in range(max_iter):
               (n_iter, avg_sample_loss_val, accuracy,
                avg_accuracy, -entropy_reg_val))
         summary = sess.run(log_step, {loss_ph: avg_sample_loss_val,
-                                      entropy_ph: -entropy_reg_val,
-                                      accuracy_ph: avg_accuracy})
+                                          entropy_ph: -entropy_reg_val,
+                                          accuracy_ph: avg_accuracy,
+                                          tr_acc: accuracy,
+                                          val_acc : answer_accuracy})
         log_writer.add_summary(summary, n_iter)
 
     # Save snapshot
@@ -274,8 +374,10 @@ for n_iter in range(max_iter):
         snapshot_file = os.path.join(snapshot_dir, "%08d" % (n_iter+1))
         snapshot_saver.save(sess, snapshot_file, write_meta_graph=False)
         print('snapshot saved to ' + snapshot_file)
-    
-    
+        with open(os.path.join(snapshot_dir, "swaps%d.txt" % (n_iter + 1)), "wb") as f:
+            pickle.dump(swaps, f)
+
+
     #better swapping
     if num_swaps != 0 and n_iter % 10 == 0: # and n_iter <= 30000:
         for mod in mods:
@@ -285,6 +387,6 @@ for n_iter in range(max_iter):
                 swaps[mod][old[mod]][x.name] = y
                 x.load(swaps[mod][new][x.name], session = sess)
             old[mod] = new
-            
+
 with open(os.path.join(snapshot_dir, "all_swaps.txt"), "wb") as f:
     pickle.dump(swaps, f)
