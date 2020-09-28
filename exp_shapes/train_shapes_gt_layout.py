@@ -53,9 +53,9 @@ log_dir = './exp_shapes/tb/%s/' % exp_name
 # Data files
 vocab_shape_file = './exp_shapes/data/vocabulary_shape.txt'
 vocab_layout_file = './exp_shapes/data/vocabulary_layout.txt'
-#image_sets = ['train.large', 'train.med', 'train.small', 'train.tiny']
+image_sets = ['train.large', 'train.med', 'train.small', 'train.tiny']
 #image_sets = ['train.nab.large', 'train.nab.med', 'train.nab.small', 'train.nab.tiny']
-image_sets = ['flip.train']
+#image_sets = ['flip.train']
 training_text_files = './exp_shapes/shapes_dataset/%s.query_str.txt'
 training_image_files = './exp_shapes/shapes_dataset/%s.input.npy'
 training_label_files = './exp_shapes/shapes_dataset/%s.output'
