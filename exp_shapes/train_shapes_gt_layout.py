@@ -24,6 +24,7 @@ from models_shapes.nmn3_assembler import Assembler
 from models_shapes.nmn3_model import NMN3ModelAtt
 
 # Module parameters
+num_swaps = int(input("Number of swaps? "))
 H_im = 30
 W_im = 30
 num_choices = 2
@@ -141,7 +142,7 @@ nmn3_model = NMN3ModelAtt(image_batch, text_seq_batch,
     encoder_dropout=encoder_dropout,
     decoder_dropout=decoder_dropout,
     decoder_sampling=decoder_sampling,
-    num_choices=num_choices, use_gt_layout=use_gt_layout,
+    num_choices=num_choices, num_swaps = num_swaps, use_gt_layout=use_gt_layout,
     gt_layout_batch=gt_layout_batch)
 
 compiler = nmn3_model.compiler
@@ -235,12 +236,12 @@ validation_image_array = (validation_images - image_mean).astype(np.float32)
 validation_vqa_label_array = np.array(validation_labels, np.int32)
 
 #varaible access
-prefix = 'neural_module_network/layout_execution/'
-mods = ['TransformModule', 'FindModule', 'AnswerModule']
+#prefix = 'neural_module_network/layout_execution/'
+#mods = ['TransformModule', 'FindModule', 'AnswerModule']
 
-swaps = dict.fromkeys(mods)
-old = dict.fromkeys(mods, 0)
-num_swaps = int(input("Number of swaps?"))
+#swaps = dict.fromkeys(mods)
+#old = dict.fromkeys(mods, 0)
+#num_swaps = int(input("Number of swaps?"))
 answer_accuracy = 0
 
 for n_iter in range(max_iter):
@@ -269,7 +270,7 @@ for n_iter in range(max_iter):
     # Build TensorFlow Fold input for NMN
     expr_feed = compiler.build_feed_dict(expr_list)
     expr_feed[vqa_label_batch] = labels
-
+    """
     #initialization for swapping
     if num_swaps != 0 and n_iter == 0:
         for mod in mods:
@@ -295,7 +296,7 @@ for n_iter in range(max_iter):
         snapshot_file = os.path.join(snapshot_dir, "%08d" % (0))
         snapshot_saver.save(sess, snapshot_file, write_meta_graph=False)
         print('snapshot saved to ' + snapshot_file)
-
+    """
     # Part 2: Run NMN and learning steps
     scores_val, avg_sample_loss_val, _ = sess.partial_run(
         h, (scores, avg_sample_loss, train_step), feed_dict=expr_feed)
@@ -377,7 +378,7 @@ for n_iter in range(max_iter):
         with open(os.path.join(snapshot_dir, "swaps%d.txt" % (n_iter + 1)), "wb") as f:
             pickle.dump(swaps, f)
 
-
+    """
     #better swapping
     if num_swaps != 0 and n_iter % 10 == 0: # and n_iter <= 30000:
         for mod in mods:
@@ -387,6 +388,8 @@ for n_iter in range(max_iter):
                 swaps[mod][old[mod]][x.name] = y
                 x.load(swaps[mod][new][x.name], session = sess)
             old[mod] = new
-
+    """
+"""
 with open(os.path.join(snapshot_dir, "all_swaps.txt"), "wb") as f:
     pickle.dump(swaps, f)
+"""

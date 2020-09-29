@@ -17,6 +17,7 @@ class Modules:
         self.num_choices = num_choices
         self.which_module_to_write = "d" #"answer" #"find"
         self.num_swaps = num_swaps
+        self.swap_weights = [tf.Variable(1, dtype = tf.float32) for i in range(num_swaps)]
 
     def _slice_image_feat_grid(self, batch_idx):
         # this callable will be wrapped into a td.Function
@@ -48,7 +49,7 @@ class Modules:
         #   1. Elementwise multiplication between image_feat_grid and text_param
         #   2. L2-normalization
         #   3. Linear classification
-        
+
         for i in range(self.num_swaps):
             iscope = scope.name + str(i)
             with tf.variable_scope(iscope, reuse=reuse):
@@ -68,11 +69,9 @@ class Modules:
 
                 eltwise_mult = tf.nn.l2_normalize(image_feat_mapped * text_param_mapped, 3)
                 if i == 0:
-                    att_grid = _1x1_conv('conv_eltwise', eltwise_mult, output_dim=1)
-                    #att_grid = tf.Print(att_grid, [N], "igoet") 
+                    att_grid = _1x1_conv('conv_eltwise', eltwise_mult, output_dim=1) * self.swap_weights[i]
                 else:
-                    att_grid += _1x1_conv('conv_eltwise', eltwise_mult, output_dim=1)
-                    #att_grid = tf.Print(att_grid, [N], "gurigo")
+                    att_grid += _1x1_conv('conv_eltwise', eltwise_mult, output_dim=1) * self.swap_weights[i]
             # TODO
             # Do we need to take exponential over the scores?
             # No.
@@ -101,19 +100,25 @@ class Modules:
         # Implementation:
         #   Convolutional layer that also involve text_param
         #   A 'soft' convolutional kernel that is modulated by text_param
-        with tf.variable_scope(scope, reuse=reuse):
-            att_shape = tf.shape(att_grid)
-            N = att_shape[0]
-            H = att_shape[1]
-            W = att_shape[2]
-            att_maps = _conv('conv_maps', att_grid, kernel_size=kernel_size,
-                stride=1, output_dim=map_dim)
+        for i in range(self.num_swaps):
+            iscope = scope.name + str(i)
+            with tf.variable_scope(iscope, reuse=reuse):
+                att_shape = tf.shape(att_grid)
+                N = att_shape[0]
+                H = att_shape[1]
+                W = att_shape[2]
+                att_maps = _conv('conv_maps', att_grid, kernel_size=kernel_size,
+                    stride=1, output_dim=map_dim)
 
-            text_param_mapped = fc('text_fc', text_param, output_dim=map_dim)
-            text_param_mapped = tf.reshape(text_param_mapped, to_T([N, 1, 1, map_dim]))
+                text_param_mapped = fc('text_fc', text_param, output_dim=map_dim)
+                text_param_mapped = tf.reshape(text_param_mapped, to_T([N, 1, 1, map_dim]))
 
-            eltwise_mult = tf.nn.l2_normalize(att_maps * text_param_mapped, 3)
-            att_grid = _1x1_conv('conv_eltwise', eltwise_mult, output_dim=1)
+                eltwise_mult = tf.nn.l2_normalize(att_maps * text_param_mapped, 3)
+                if i == 0:
+                    att_grid = _1x1_conv('conv_eltwise', eltwise_mult, output_dim=1) * self.swap_weights[i]
+                else:
+                    att_grid += _1x1_conv('conv_eltwise', eltwise_mult, output_dim=1) * self.swap_weights[i]
+
 
         if self.which_module_to_write == "transform":
             np.set_printoptions(threshold=np.nan)
@@ -155,18 +160,24 @@ class Modules:
         # Implementation:
         #   1. Max-pool over att_grid
         #   2. a linear mapping layer (without ReLU)
-        with tf.variable_scope(scope, reuse=reuse):
-            att_shape = tf.shape(att_grid)
-            N = att_shape[0]
-            H = att_shape[1]
-            W = att_shape[2]
+        for i in range(self.num_swaps):
+            iscope = scope.name + str(i)
+            with tf.variable_scope(iscope, reuse=reuse):
+                att_shape = tf.shape(att_grid)
+                N = att_shape[0]
+                H = att_shape[1]
+                W = att_shape[2]
 
-            att_min = tf.reduce_min(att_grid, axis=[1, 2])
-            att_avg = tf.reduce_mean(att_grid, axis=[1, 2])
-            att_max = tf.reduce_max(att_grid, axis=[1, 2])
-            # att_reduced has shape [N, 3]
-            att_reduced = tf.concat([att_min, att_avg, att_max], axis=1)
-            scores = fc('fc_scores', att_reduced, output_dim=self.num_choices)
+                att_min = tf.reduce_min(att_grid, axis=[1, 2])
+                att_avg = tf.reduce_mean(att_grid, axis=[1, 2])
+                att_max = tf.reduce_max(att_grid, axis=[1, 2])
+                # att_reduced has shape [N, 3]
+                att_reduced = tf.concat([att_min, att_avg, att_max], axis=1)
+                if i == 0:
+                    scores = fc('fc_scores', att_reduced, output_dim=self.num_choices) * self.swap_weights[i]
+                else:
+                    scores += fc('fc_scores', att_reduced, output_dim=self.num_choices) * self.swap_weights[i]
+
 
         if self.which_module_to_write == "answer":
             np.set_printoptions(threshold=np.nan)

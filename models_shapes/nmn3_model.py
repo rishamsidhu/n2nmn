@@ -18,7 +18,7 @@ class NMN3ModelAtt:
         T_decoder, num_vocab_txt, embed_dim_txt, num_vocab_nmn,
         embed_dim_nmn, lstm_dim, num_layers, EOS_idx,
         encoder_dropout, decoder_dropout, decoder_sampling,
-        num_choices, use_gt_layout=None, gt_layout_batch=None,
+        num_choices, num_swaps, use_gt_layout=None, gt_layout_batch=None,
         scope='neural_module_network', reuse=None):
 
         with tf.variable_scope(scope, reuse=reuse):
@@ -51,7 +51,7 @@ class NMN3ModelAtt:
 
             # Part 2: Neural Module Network
             with tf.variable_scope('layout_execution'):
-                modules = Modules(image_feat_grid, word_vecs, num_choices)
+                modules = Modules(image_feat_grid, word_vecs, num_choices, num_swaps)
                 self.modules = modules
                 # Recursion of modules
                 att_shape = image_feat_grid.get_shape().as_list()[1:-1] + [1]
