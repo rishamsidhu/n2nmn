@@ -81,12 +81,15 @@ class NMN3ModelAtt:
                                            '_Transform': case_transform,
                                            '_And': case_and})
                 att_expr_decl.resolve_to(recursion_cases)
+                #self.compiler1 = td.Compiler.create(case_transform)
+                #self.scores1 = self.compiler1.output_tensors[0]
                 # _Answer: output scores for choice (for valid expressions)
                 predicted_scores = td.Record([('input_0', recursion_cases),
                                               ('time_idx', td.Scalar('int32')),
                                               ('batch_idx', td.Scalar('int32'))])
                 predicted_scores = predicted_scores >> \
                     td.ScopedLayer(modules.AnswerModule, name_or_scope='AnswerModule')
+                
 
                 # For invalid expressions, define a dummy answer
                 # so that all answers have the same form
@@ -97,6 +100,8 @@ class NMN3ModelAtt:
                                           INVALID: dummy_scores})
 
                 # compile and get the output scores
+                #print("model: this is here~~~~~~")
+                #print(recursion_cases)
                 self.compiler = td.Compiler.create(output_scores)
                 self.scores = self.compiler.output_tensors[0]
 
