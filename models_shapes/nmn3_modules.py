@@ -3,14 +3,20 @@ from __future__ import absolute_import, division, print_function
 import numpy as np
 import tensorflow as tf
 from tensorflow import convert_to_tensor as to_T
+#import sys
+#np.set_printoptions(threshold= sys.maxsize)
 
 from util.cnn import fc_layer as fc, conv_layer as conv
 
+#import pickle
+
 class Modules:
-    def __init__(self, image_feat_grid, word_vecs, num_choices):
+    def __init__(self, image_feat_grid, word_vecs, num_choices, num_swaps):
         self.image_feat_grid = image_feat_grid
         self.word_vecs = word_vecs
         self.num_choices = num_choices
+        self.which_module_to_write = "d" #"answer" #"find"
+        self.num_swaps = num_swaps
 
     def _slice_image_feat_grid(self, batch_idx):
         # this callable will be wrapped into a td.Function
@@ -42,30 +48,41 @@ class Modules:
         #   1. Elementwise multiplication between image_feat_grid and text_param
         #   2. L2-normalization
         #   3. Linear classification
-        with tf.variable_scope(scope, reuse=reuse):
-            image_shape = tf.shape(image_feat_grid)
-            N = tf.shape(time_idx)[0]
-            H = image_shape[1]
-            W = image_shape[2]
-            D_im = image_feat_grid.get_shape().as_list()[-1]
-            D_txt = text_param.get_shape().as_list()[-1]
+        
+        for i in range(self.num_swaps):
+            iscope = scope.name + str(i)
+            with tf.variable_scope(iscope, reuse=reuse):
+                image_shape = tf.shape(image_feat_grid)
+                N = tf.shape(time_idx)[0]
+                H = image_shape[1]
+                W = image_shape[2]
+                D_im = image_feat_grid.get_shape().as_list()[-1]
+                D_txt = text_param.get_shape().as_list()[-1]
 
-            # image_feat_mapped has shape [N, H, W, map_dim]
-            image_feat_mapped = _1x1_conv('conv_image', image_feat_grid,
-                                          output_dim=map_dim)
+                # image_feat_mapped has shape [N, H, W, map_dim]
+                image_feat_mapped = _1x1_conv('conv_image', image_feat_grid,
+                                              output_dim=map_dim)
 
-            text_param_mapped = fc('fc_text', text_param, output_dim=map_dim)
-            text_param_mapped = tf.reshape(text_param_mapped, to_T([N, 1, 1, map_dim]))
+                text_param_mapped = fc('fc_text', text_param, output_dim=map_dim)
+                text_param_mapped = tf.reshape(text_param_mapped, to_T([N, 1, 1, map_dim]))
 
-            eltwise_mult = tf.nn.l2_normalize(image_feat_mapped * text_param_mapped, 3)
-            att_grid = _1x1_conv('conv_eltwise', eltwise_mult, output_dim=1)
-
+                eltwise_mult = tf.nn.l2_normalize(image_feat_mapped * text_param_mapped, 3)
+                if i == 0:
+                    att_grid = _1x1_conv('conv_eltwise', eltwise_mult, output_dim=1)
+                    #att_grid = tf.Print(att_grid, [N], "igoet") 
+                else:
+                    att_grid += _1x1_conv('conv_eltwise', eltwise_mult, output_dim=1)
+                    #att_grid = tf.Print(att_grid, [N], "gurigo")
             # TODO
             # Do we need to take exponential over the scores?
             # No.
             # Does the attention needs to be normalized? (sum up to 1)
             # No, since non-existence should be 0 everywhere
 
+
+        if self.which_module_to_write == "find":
+            np.set_printoptions(threshold=np.nan)
+            att_grid = tf.Print(att_grid, [att_grid], summarize = 2147483647)
         return att_grid
 
     def TransformModule(self, input_0, time_idx, batch_idx, kernel_size=3,
@@ -97,6 +114,10 @@ class Modules:
 
             eltwise_mult = tf.nn.l2_normalize(att_maps * text_param_mapped, 3)
             att_grid = _1x1_conv('conv_eltwise', eltwise_mult, output_dim=1)
+
+        if self.which_module_to_write == "transform":
+            np.set_printoptions(threshold=np.nan)
+            att_grid = tf.Print(att_grid, [att_grid], summarize = 2147483647)
 
         return att_grid
 
@@ -146,6 +167,10 @@ class Modules:
             # att_reduced has shape [N, 3]
             att_reduced = tf.concat([att_min, att_avg, att_max], axis=1)
             scores = fc('fc_scores', att_reduced, output_dim=self.num_choices)
+
+        if self.which_module_to_write == "answer":
+            np.set_printoptions(threshold=np.nan)
+            scores = tf.Print(scores, [scores], summarize = 2147483647)
 
         return scores
 
