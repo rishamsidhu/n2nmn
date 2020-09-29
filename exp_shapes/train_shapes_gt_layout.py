@@ -375,8 +375,8 @@ for n_iter in range(max_iter):
         snapshot_file = os.path.join(snapshot_dir, "%08d" % (n_iter+1))
         snapshot_saver.save(sess, snapshot_file, write_meta_graph=False)
         print('snapshot saved to ' + snapshot_file)
-        with open(os.path.join(snapshot_dir, "swaps%d.txt" % (n_iter + 1)), "wb") as f:
-            pickle.dump(swaps, f)
+        #with open(os.path.join(snapshot_dir, "swaps%d.txt" % (n_iter + 1)), "wb") as f:
+        #   pickle.dump(swaps, f)
 
     """
     #better swapping
