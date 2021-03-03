@@ -9,7 +9,7 @@ from util.empty_safe_conv import empty_safe_1x1_conv as _1x1_conv
 from util.empty_safe_conv import empty_safe_conv as _conv
 
 class Modules:
-    def __init__(self, image_feat_grid, word_vecs, num_choices, num_swaps):
+    def __init__(self, image_feat_grid, word_vecs, num_choices):
         self.image_feat_grid = image_feat_grid
         self.word_vecs = word_vecs
         self.num_choices = num_choices
@@ -24,8 +24,6 @@ class Modules:
         D_word = word_vecs.get_shape().as_list()[-1]
         self.word_vecs_flat = tf.reshape(
             word_vecs, to_T([T_full*self.N_full, D_word]))
-        self.num_swaps = num_swaps
-        self.swap_weights = [tf.Variable(1, dtype = tf.float32) for i in range(num_swaps)]
 
         # create each dummy modules here so that weights won't get initialized again
         att_shape = image_feat_grid.get_shape().as_list()[:-1] + [1]
@@ -90,11 +88,8 @@ class Modules:
         #   1. Elementwise multiplication between image_feat_grid and text_param
         #   2. L2-normalization
         #   3. Linear classification
-        for i in range(self.num_swaps):
-            iscope = self.module_variable_scope.name + "/" + scope + str(i)
-            #print("ISCOPE: ", iscope)
-            #with tf.variable_scope(self.module_variable_scope):
-            with tf.variable_scope(iscope, reuse=reuse):
+        with tf.variable_scope(self.module_variable_scope):
+            with tf.variable_scope(scope, reuse=reuse):
                 image_shape = tf.shape(image_feat_grid)
                 N = tf.shape(time_idx)[0]
                 H = image_shape[1]
@@ -110,14 +105,7 @@ class Modules:
                 text_param_mapped = tf.reshape(text_param_mapped, to_T([N, 1, 1, map_dim]))
 
                 eltwise_mult = tf.nn.l2_normalize(image_feat_mapped * text_param_mapped, 3)
-                #eltwise_mult = tf.Print(eltwise_mult, [self.swap_weights], message = iscope)
-                #att_grid = _1x1_conv('conv_eltwise', eltwise_mult, output_dim=1)
-                if i == 0:
-                    att_grid = _1x1_conv('conv_eltwise', eltwise_mult, output_dim=1) * self.swap_weights[i]
-                    #att_grid = tf.Print(att_grid, [self.swap_weights], message = iscope)
-                else:
-                    att_grid += _1x1_conv('conv_eltwise', eltwise_mult, output_dim=1) * self.swap_weights[i]
-
+                att_grid = _1x1_conv('conv_eltwise', eltwise_mult, output_dim=1)
 
         att_grid.set_shape(self.att_shape)
         return att_grid
@@ -163,9 +151,8 @@ class Modules:
         #   2. linear transform language features to map_dim
         #   3. Convolve image features to map_dim
         #   4. Element-wise multiplication of the three, l2_normalize, linear transform.
-        for i in range(self.num_swaps):
-            iscope = self.module_variable_scope.name + "/" + scope + str(i)
-            with tf.variable_scope(iscope, reuse= reuse):
+        with tf.variable_scope(self.module_variable_scope):
+            with tf.variable_scope(scope, reuse=reuse):
                 image_shape = tf.shape(image_feat_grid)
                 N = tf.shape(time_idx)[0]
                 H = image_shape[1]
@@ -190,10 +177,7 @@ class Modules:
 
                 eltwise_mult = tf.nn.l2_normalize(
                     image_feat_mapped * text_param_mapped * att_feat_mapped, 3)
-                if i == 0:
-                    att_grid = _1x1_conv('conv_eltwise', eltwise_mult, output_dim=1)* self.swap_weights[i]
-                else:
-                    att_grid += _1x1_conv('conv_eltwise', eltwise_mult, output_dim =1)* self.swap_weights[i]
+                att_grid = _1x1_conv('conv_eltwise', eltwise_mult, output_dim=1)
 
         att_grid.set_shape(self.att_shape)
         return att_grid
@@ -213,9 +197,8 @@ class Modules:
         # Implementation:
         #   Convolutional layer that also involve text_param
         #   A 'soft' convolutional kernel that is modulated by text_param
-        for i in range(self.num_swaps):
-            iscope = self.module_variable_scope.name + "/" + scope + str(i)
-            with tf.variable_scope(iscope, reuse= reuse):
+        with tf.variable_scope(self.module_variable_scope):
+            with tf.variable_scope(scope, reuse=reuse):
                 att_shape = tf.shape(input_0)
                 N = att_shape[0]
                 H = att_shape[1]
@@ -227,11 +210,7 @@ class Modules:
                 text_param_mapped = tf.reshape(text_param_mapped, to_T([N, 1, 1, map_dim]))
 
                 eltwise_mult = tf.nn.l2_normalize(att_maps * text_param_mapped, 3)
-                #att_grid = _1x1_conv('conv_eltwise', eltwise_mult, output_dim=1)
-                if i == 0:
-                    att_grid = _1x1_conv('conv_eltwise', eltwise_mult, output_dim=1) * self.swap_weights[i]
-                else:
-                    att_grid += _1x1_conv('conv_eltwise', eltwise_mult, output_dim=1) * self.swap_weights[i]
+                att_grid = _1x1_conv('conv_eltwise', eltwise_mult, output_dim=1)
 
         att_grid.set_shape(self.att_shape)
         return att_grid
@@ -289,18 +268,14 @@ class Modules:
         # Implementation:
         #   1. Max-pool over att_grid
         #   2. a linear mapping layer (without ReLU)
-        for i in range(self.num_swaps):
-            iscope = self.module_variable_scope.name + "/" + scope + str(i)
-            with tf.variable_scope(iscope, reuse= reuse):
+        with tf.variable_scope(self.module_variable_scope):
+            with tf.variable_scope(scope, reuse=reuse):
                 att_min = tf.reduce_min(input_0, axis=[1, 2])
                 att_avg = tf.reduce_mean(input_0, axis=[1, 2])
                 att_max = tf.reduce_max(input_0, axis=[1, 2])
                 # att_reduced has shape [N, 3]
                 att_reduced = tf.concat([att_min, att_avg, att_max], axis=1)
-                if i == 0:
-                    scores = fc('fc_scores', att_reduced, output_dim=self.num_choices)* self.swap_weights[i]
-                else:
-                    scores += fc('fc_scores', att_reduced, output_dim=self.num_choices)* self.swap_weights[i]
+                scores = fc('fc_scores', att_reduced, output_dim=self.num_choices)
 
         return scores
 
@@ -316,19 +291,15 @@ class Modules:
         #
         # Implementation:
         #   1. linear transform of the attention map (also including max and min)
-        for i in range(self.num_swaps):
-            iscope = self.module_variable_scope.name + "/" + scope + str(i)
-            with tf.variable_scope(iscope, reuse=reuse):
+        with tf.variable_scope(self.module_variable_scope):
+            with tf.variable_scope(scope, reuse=reuse):
                 H, W = self.att_shape[1:3]
                 att_all = tf.reshape(input_0, to_T([-1, H*W]))
                 att_min = tf.reduce_min(input_0, axis=[1, 2])
                 att_max = tf.reduce_max(input_0, axis=[1, 2])
                 # att_reduced has shape [N, 3]
                 att_concat = tf.concat([att_all, att_min, att_max], axis=1)
-                if i == 0:
-                    scores = fc('fc_scores', att_concat, output_dim=self.num_choices)* self.swap_weights[i]
-                else:
-                    scores += fc('fc_scores', att_concat, output_dim=self.num_choices)* self.swap_weights[i]
+                scores = fc('fc_scores', att_concat, output_dim=self.num_choices)
 
         return scores
 
@@ -345,11 +316,8 @@ class Modules:
         #
         # Implementation:
         #   1. linear transform of the attention map (also including max and min)
-        #with tf.variable_scope(self.module_variable_scope):
-        #    with tf.variable_scope(scope, reuse=reuse):
-        for i in range(self.num_swaps):
-            iscope = self.module_variable_scope.name + "/" + scope + str(i)
-            with tf.variable_scope(iscope, reuse = reuse):
+        with tf.variable_scope(self.module_variable_scope):
+            with tf.variable_scope(scope, reuse=reuse):
                 att_shape = tf.shape(input_0)
 
                 H, W = self.att_shape[1:3]
@@ -363,10 +331,7 @@ class Modules:
                 att_concat = tf.concat([att_all_0, att_min_0, att_max_0,
                                         att_all_1, att_min_1, att_max_1],
                                        axis=1)
-                if i == 0:
-                    scores = fc('fc_scores', att_concat, output_dim=self.num_choices)* self.swap_weights[i]
-                else:
-                    scores += fc('fc_scores', att_concat, output_dim=self.num_choices)* self.swap_weights[i]
+                scores = fc('fc_scores', att_concat, output_dim=self.num_choices)
 
         return scores
 
@@ -383,10 +348,8 @@ class Modules:
         #
         # Implementation:
         #   1. linear transform of the attention map (also including max and min)
-        #with tf.variable_scope(self.module_variable_scope):
-        for i in range(self.num_swaps):
-            iscope = self.module_variable_scope.name + "/" + scope + str(i)
-            with tf.variable_scope(iscope, reuse=reuse):
+        with tf.variable_scope(self.module_variable_scope):
+            with tf.variable_scope(scope, reuse=reuse):
                 att_shape = tf.shape(input_0)
 
                 H, W = self.att_shape[1:3]
@@ -400,10 +363,7 @@ class Modules:
                 att_concat = tf.concat([att_all_0, att_min_0, att_max_0,
                                         att_all_1, att_min_1, att_max_1],
                                        axis=1)
-                if i == 0:
-                    scores = fc('fc_scores', att_concat, output_dim=self.num_choices)* self.swap_weights[i]
-                else:
-                    scores += fc('fc_scores', att_concat, output_dim=self.num_choices)* self.swap_weights[i]
+                scores = fc('fc_scores', att_concat, output_dim=self.num_choices)
 
         return scores
 
@@ -420,10 +380,8 @@ class Modules:
         #
         # Implementation:
         #   1. linear transform of the attention map (also including max and min)
-        #with tf.variable_scope(self.module_variable_scope):
-        for i in range(self.num_swaps):
-            iscope = self.module_variable_scope.name + "/" + scope + str(i)
-            with tf.variable_scope(iscope, reuse=reuse):
+        with tf.variable_scope(self.module_variable_scope):
+            with tf.variable_scope(scope, reuse=reuse):
                 att_shape = tf.shape(input_0)
 
                 H, W = self.att_shape[1:3]
@@ -437,10 +395,7 @@ class Modules:
                 att_concat = tf.concat([att_all_0, att_min_0, att_max_0,
                                         att_all_1, att_min_1, att_max_1],
                                        axis=1)
-                if i == 0:
-                    scores = fc('fc_scores', att_concat, output_dim=self.num_choices)* self.swap_weights[i]
-                else:
-                    scores += fc('fc_scores', att_concat, output_dim=self.num_choices)* self.swap_weights[i]
+                scores = fc('fc_scores', att_concat, output_dim=self.num_choices)
 
         return scores
 
@@ -463,10 +418,8 @@ class Modules:
         #   2. linear transform language features to map_dim
         #   3. Convolve image features to map_dim
         #   4. Element-wise multiplication of the three, l2_normalize, linear transform.
-        #with tf.variable_scope(self.module_variable_scope):
-        for i in range(self.num_swaps):
-            iscope = self.module_variable_scope.name + "/" + scope + str(i)
-            with tf.variable_scope(iscope, reuse=reuse):
+        with tf.variable_scope(self.module_variable_scope):
+            with tf.variable_scope(scope, reuse=reuse):
                 image_shape = tf.shape(image_feat_grid)
                 N = tf.shape(time_idx)[0]
                 H = image_shape[1]
@@ -494,10 +447,7 @@ class Modules:
 
                 eltwise_mult = tf.nn.l2_normalize(
                     att_feat_mapped_0 * text_param_mapped * att_feat_mapped_1, 1)
-                if i == 0:
-                    scores = fc('fc_eltwise', eltwise_mult, output_dim=self.num_choices)* self.swap_weights[i]
-                else:
-                    scores += fc('fc_eltwise', eltwise_mult, output_dim=self.num_choices)* self.swap_weights[i]
+                scores = fc('fc_eltwise', eltwise_mult, output_dim=self.num_choices)
 
         return scores
 
@@ -518,10 +468,8 @@ class Modules:
         #      linear transform to map_dim
         #   2. linear transform language features to map_dim
         #   3. Element-wise multiplication of the two, l2_normalize, linear transform.
-        #with tf.variable_scope(self.module_variable_scope):
-        for i in range(self.num_swaps):
-            iscope = self.module_variable_scope.name + "/" + scope + str(i)
-            with tf.variable_scope(iscope, reuse=reuse):
+        with tf.variable_scope(self.module_variable_scope):
+            with tf.variable_scope(scope, reuse=reuse):
                 image_shape = tf.shape(image_feat_grid)
                 N = tf.shape(time_idx)[0]
                 H = image_shape[1]
@@ -542,9 +490,6 @@ class Modules:
                     to_T([N, map_dim]))
 
                 eltwise_mult = tf.nn.l2_normalize(text_param_mapped * att_feat_mapped, 1)
-                if i == 0:
-                    scores = fc('fc_eltwise', eltwise_mult, output_dim=self.num_choices)* self.swap_weights[i]
-                else:
-                    scores += fc('fc_eltwise', eltwise_mult, output_dim=self.num_choices)* self.swap_weights[i]
+                scores = fc('fc_eltwise', eltwise_mult, output_dim=self.num_choices)
 
         return scores

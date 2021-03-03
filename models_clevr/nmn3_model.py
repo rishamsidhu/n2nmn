@@ -14,7 +14,7 @@ from util.cnn import fc_layer as fc, conv_layer as conv
 class NMN3Model:
     def __init__(self, image_feat_grid, text_seq_batch, seq_length_batch,
         T_decoder, num_vocab_txt, embed_dim_txt, num_vocab_nmn,
-        embed_dim_nmn, lstm_dim, num_layers, assembler,
+        embed_dim_nmn, lstm_dim, num_layers, num_swaps, assembler,
         encoder_dropout, decoder_dropout, decoder_sampling,
         num_choices, use_gt_layout=None, gt_layout_batch=None,
         scope='neural_module_network', reuse=None):
@@ -47,7 +47,7 @@ class NMN3Model:
 
             # Part 2: Neural Module Network
             with tf.variable_scope('layout_execution'):
-                modules = Modules(image_feat_grid, word_vecs, num_choices)
+                modules = Modules(image_feat_grid, word_vecs, num_choices, num_swaps)
                 self.modules = modules
                 # Recursion of modules
                 att_shape = image_feat_grid.get_shape().as_list()[1:-1] + [1]

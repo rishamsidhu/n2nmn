@@ -42,7 +42,8 @@ baseline_decay = 0.99
 max_grad_l2_norm = 10
 max_iter = 80000
 snapshot_interval = 10000
-exp_name = "clevr_gt_layout"
+num_swaps = int(input("Number of Swaps: "))
+exp_name = "clevr_gt_layout" + input("Experiment name: ")
 snapshot_dir = './exp_clevr/tfmodel/%s/' % exp_name
 
 # Log params
@@ -88,7 +89,7 @@ nmn3_model_trn = NMN3Model(
     num_vocab_txt=num_vocab_txt, embed_dim_txt=embed_dim_txt,
     num_vocab_nmn=num_vocab_nmn, embed_dim_nmn=embed_dim_nmn,
     lstm_dim=lstm_dim, num_layers=num_layers,
-    assembler=assembler,
+    num_swaps = num_swaps, assembler=assembler,
     encoder_dropout=encoder_dropout,
     decoder_dropout=decoder_dropout,
     decoder_sampling=decoder_sampling,
