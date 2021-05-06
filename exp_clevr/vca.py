@@ -2,7 +2,8 @@ from __future__ import absolute_import, division, print_function
 
 gpu_id = 0  # set GPU id to use
 import os; os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
-
+from collections import Counter
+from scipy.stats import entropy
 import numpy as np
 import tensorflow as tf
 # Start the session BEFORE importing tensorflow_fold
@@ -31,8 +32,9 @@ T_decoder = 20
 N = 1
 prune_filter_module = True
 
-exp_name = "clevr_v0_gt_layout_prune"
-snapshot_name = "00600000"
+#swaps = int(input("num swaps : "))
+exp_name = input("experiment name :")
+snapshot_name = "000" + input("step? ") + "0000"
 # tst_image_set = 'trn'
 tst_image_set = 'val'
 snapshot_file = './exp_clevr/tfmodel/%s/%s' % (exp_name, snapshot_name)
@@ -171,12 +173,14 @@ snapshot_saver = tf.train.Saver(max_to_keep=None)  # keep all snapshots
 snapshot_saver.restore(sess, snapshot_file)
 
 import matplotlib.pyplot as plt
-%matplotlib inline
+#%matplotlib inline
 plt.rcParams.update({'font.size': 6})
 def run_visualization(dataset_tst):
     if dataset_tst is None:
         return
     print('Running test...')
+    mods_list = Counter()
+    mods_count = Counter()
     answer_word_list = dataset_tst.batch_loader.answer_dict.word_list
     vocab_list = dataset_tst.batch_loader.vocab_dict.word_list
     for n, batch in enumerate(dataset_tst.batches()):
@@ -224,7 +228,7 @@ def run_visualization(dataset_tst):
         atts_val = atts_val[:len(decoder_words), :len(encoder_words)]
         plt.figure(figsize=(12, 12))
         plt.subplot(4, 3, 1)
-        plt.imshow(plt.imread(batch['image_path_list'][0]))
+        plt.imshow(plt.imread(batch['image_path_list'][0].replace("clevr-dataset", "my_dataset")))
         plt.colorbar()
         question = ' '.join(encoder_words[:10]) + '\n' + \
             ' '.join(encoder_words[10:20]) + '\n' + \
@@ -251,14 +255,26 @@ def run_visualization(dataset_tst):
             if results.ndim > 2:
                 plt.imshow(results[..., 0], interpolation='nearest', vmin=-1.5, vmax=1.5, cmap='Reds')
                 plt.axis('off')
+                mods_count[module_name] += 1
+                mods_list[module_name] += entropy(np.exp(results[..., 0]).flatten())
             else:
                 plot = np.tile(results.reshape((1, num_choices)), (2, 1))
                 plt.imshow(plot, interpolation='nearest', vmin=-1.5, vmax=1.5, cmap='Reds')
                 plt.xticks(range(len(answer_word_list)), answer_word_list, rotation=90)
+                mods_list[module_name] += entropy(np.exp(results))
+                mods_count[module_name] += 1
             plt.title('output from '+module_name[1:]+'[%d]'%t)
             plt.colorbar()
 
         plt.savefig(os.path.join(save_dir, '%08d.jpg' % n))
         plt.close('all')
+
+    total = 0
+    for m,v in sorted(mods_list.items()):
+        print(m)
+        x = v / mods_count[m]
+        total += x
+        print(x)
+    print("TOTAL ENTROPY : ", total / len(mods_list))
 
 run_visualization(data_reader_tst)
