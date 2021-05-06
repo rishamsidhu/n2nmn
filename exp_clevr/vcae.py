@@ -32,8 +32,6 @@ N = 1
 prune_filter_module = True
 swaps = int(input("num swaps : "))
 exp_name = input("experiment name :")
-nw = input("normalized weights during training? (t/f) : ")
-nw = (nw == "t")
 snapshot_name = "000" + input("step? ") + "0000"
 # tst_image_set = 'trn'
 tst_image_set = 'val'
@@ -82,7 +80,7 @@ nmn3_model_tst = NMN3Model(
     seq_length_batch, T_decoder=T_decoder,
     num_vocab_txt=num_vocab_txt, embed_dim_txt=embed_dim_txt,
     num_vocab_nmn=num_vocab_nmn, embed_dim_nmn=embed_dim_nmn,
-    lstm_dim=lstm_dim, num_layers=num_layers, num_swaps = swaps, nw = nw,
+    lstm_dim=lstm_dim, num_layers=num_layers, num_swaps = swaps, nw = False,
     assembler=assembler,
     encoder_dropout=False,
     decoder_dropout=False,
@@ -100,9 +98,6 @@ batch_idx = tf.constant([0], tf.int32)
 time_idx = tf.placeholder(tf.int32, [1])
 input_0 = tf.placeholder(tf.float32, [1, H_feat, W_feat, 1])
 input_1 = tf.placeholder(tf.float32, [1, H_feat, W_feat, 1])
-
-#for x in tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope = "neural_module_network/layout_execution/"):
-#    print(x.name)
 
 
 # Manually construct each module outside TensorFlow fold for visualization
@@ -182,23 +177,12 @@ def expr2str(expr, indent=4):
     expr_str = name[1:]+('[%d]'%expr['time_idx'])+"("+", ".join(input_str)+")"
     return expr_str
 
-#for x in tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES):
-#    print(x.name)
-
 snapshot_saver = tf.train.Saver(var_list = var_list, max_to_keep=None)  # keep all snapshots
 snapshot_saver.restore(sess, snapshot_file)
-#print(tf.train.list_variables(snapshot_file))
-
-#for x in tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope = "neural_module_network/layout_execution/"):
-#    if "Variable" in x.name:
-#        print(x.name)
 
 for x in tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope = "neural_module_network/layout_execution_1/"):
-    #y = tf.get_variable("neural_module_network/layout_execution/Variable:0")
     for y in tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope = "neural_module_network/layout_execution/Variable"):
         if x.name[-5:] == y.name[-5:]:
-            #print(x.name)
-            #print(y.name)
             assign_op = x.assign(y.eval(session = sess))
             sess.run(assign_op)
 
@@ -213,9 +197,13 @@ def run_visualization(dataset_tst):
     mods_count = Counter()
     answer_word_list = dataset_tst.batch_loader.answer_dict.word_list
     vocab_list = dataset_tst.batch_loader.vocab_dict.word_list
+    most_outputs = []
+    right_or_wrong = []
     for n, batch in enumerate(dataset_tst.batches()):
         if n >= 100: break
         # set up input and output tensors
+        this_output = [] #np.zeros((1, 15))
+        #weird_output = np.zeros((1, num_choices))
         h = sess.partial_run_setup(
             [nmn3_model_tst.predicted_tokens, nmn3_model_tst.scores, word_vecs, atts],
             [input_seq_batch, seq_length_batch, image_feat_batch,
@@ -247,7 +235,7 @@ def run_visualization(dataset_tst):
         result, all_output_stack = eval_expr(layout_tokens, image_feat_grid_val, word_vecs_val)
         # check that the results are consistent
         diff = np.max(np.abs(result - scores_val))
-        #assert(np.all(diff < 1e-4))
+        assert(np.all(diff < 1e-4))
 
         encoder_words = [vocab_list[w]
                          for n_w, w in enumerate(batch['input_seq_batch'][:, 0])
@@ -275,6 +263,7 @@ def run_visualization(dataset_tst):
                  'Predicted layout:\n\n' + expr2str(expr_list[0]) +
                  '\n\nlabel: '+ answer_word_list[labels[0]] +
                  '\nprediction: '+ answer_word_list[predictions[0]])
+        right_or_wrong += [(answer_word_list[labels[0]] == answer_word_list[predictions[0]])]
         plt.subplot(4, 3, 3)
         plt.imshow(atts_val.reshape(atts_val.shape[:2]), interpolation='nearest', cmap='Reds')
         plt.xticks(np.arange(len(encoder_words)), encoder_words, rotation=90)
@@ -285,10 +274,12 @@ def run_visualization(dataset_tst):
             plt.subplot(4, 3, t+4)
             #print(module_name)
             #print(results.shape)
-            
+
             if results.ndim > 2:
-                plt.imshow(results[..., 0], interpolation='nearest', vmin=-1.5, vmax=1.5, cmap='Reds')
+                sh = results[..., 0]
+                plt.imshow(sh, interpolation='nearest', vmin=-1.5, vmax=1.5, cmap='Reds')
                 plt.axis('off')
+                this_output += [sh.flatten()] #np.vstack((this_output, sh))
                 mods_count[module_name] += 1
                 mods_list[module_name] += entropy(np.exp(results[..., 0]).flatten())
             else:
@@ -297,15 +288,27 @@ def run_visualization(dataset_tst):
                 plot = np.tile(results.reshape((1, num_choices)), (2, 1))
                 plt.imshow(plot, interpolation='nearest', vmin=-1.5, vmax=1.5, cmap='Reds')
                 plt.xticks(range(len(answer_word_list)), answer_word_list, rotation=90)
+                this_output += [results.flatten()]
+                #weird_output = np.vstack((weird_output, results.reshape((1, num_choices))))
             plt.title('output from '+module_name[1:]+'[%d]'%t)
             plt.colorbar()
 
+        #this_output = np.append(this_output[1:].flatten(), weird_output[1:].flatten())
+        most_outputs += [this_output]
         plt.savefig(os.path.join(save_dir, '%08d.jpg' % n))
         plt.close('all')
-    print("ENTROPIES")
-    for m in mods_list:
-        print(m)
-        print(mods_list[m] / mods_count[m])
+
+    right = []
+    wrong = []
+    for i in range(100):
+        if right_or_wrong[i]:
+            right += [entropy(np.exp(most_outputs[i][j])) for j in range(len(most_outputs[i]))] 
+            #right += [entropy(np.exp(most_outputs[i]))]
+        else:
+            wrong += [entropy(np.exp(most_outputs[i][j])) for j in range(len(most_outputs[i]))]
+            #wrong += [entropy(np.exp(most_outputs[i]))]
+    print("right entropy : ", sum(right) / len(right))
+    print("wrong entropy : ", sum(wrong) / len(wrong))
+
 
 run_visualization(data_reader_tst)
-

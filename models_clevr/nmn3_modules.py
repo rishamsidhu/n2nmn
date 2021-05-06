@@ -9,7 +9,7 @@ from util.empty_safe_conv import empty_safe_1x1_conv as _1x1_conv
 from util.empty_safe_conv import empty_safe_conv as _conv
 
 class Modules:
-    def __init__(self, image_feat_grid, word_vecs, num_choices, num_swaps):
+    def __init__(self, image_feat_grid, word_vecs, num_choices, num_swaps, nw = False):
         self.image_feat_grid = image_feat_grid
         self.word_vecs = word_vecs
         self.num_choices = num_choices
@@ -26,6 +26,7 @@ class Modules:
             word_vecs, to_T([T_full*self.N_full, D_word]))
         self.num_swaps = num_swaps
         self.swap_weights = [tf.Variable(1, dtype = tf.float32) for i in range(num_swaps)]
+        self.nw = nw
 
         # create each dummy modules here so that weights won't get initialized again
         att_shape = image_feat_grid.get_shape().as_list()[:-1] + [1]
@@ -47,6 +48,15 @@ class Modules:
         self.LessNumModule(input_att, input_att, time_idx, batch_idx, reuse=False)
         self.SamePropertyModule(input_att, input_att, time_idx, batch_idx, reuse=False)
         self.DescribeModule(input_att, time_idx, batch_idx, reuse=False)
+
+    def weight_softmax(self, index, nw):
+        if not self.nw:
+            return self.swap_weights[index]
+        if len(self.swap_weights) <= 1:
+            return 1.0
+        else:
+            denom = [tf.exp(e) for e in self.swap_weights]
+            return denom[index]/sum(denom)
 
     def _slice_image_feat_grid(self, batch_idx):
         # In TF Fold, batch_idx is a [N_batch, 1] tensor
@@ -113,10 +123,10 @@ class Modules:
                 #eltwise_mult = tf.Print(eltwise_mult, [self.swap_weights], message = iscope)
                 #att_grid = _1x1_conv('conv_eltwise', eltwise_mult, output_dim=1)
                 if i == 0:
-                    att_grid = _1x1_conv('conv_eltwise', eltwise_mult, output_dim=1) * self.swap_weights[i]
+                    att_grid = _1x1_conv('conv_eltwise', eltwise_mult, output_dim=1) * self.weight_softmax(i, self.nw)
                     #att_grid = tf.Print(att_grid, [self.swap_weights], message = iscope)
                 else:
-                    att_grid += _1x1_conv('conv_eltwise', eltwise_mult, output_dim=1) * self.swap_weights[i]
+                    att_grid += _1x1_conv('conv_eltwise', eltwise_mult, output_dim=1) * self.weight_softmax(i, self.nw)
 
 
         att_grid.set_shape(self.att_shape)
@@ -191,9 +201,9 @@ class Modules:
                 eltwise_mult = tf.nn.l2_normalize(
                     image_feat_mapped * text_param_mapped * att_feat_mapped, 3)
                 if i == 0:
-                    att_grid = _1x1_conv('conv_eltwise', eltwise_mult, output_dim=1)* self.swap_weights[i]
+                    att_grid = _1x1_conv('conv_eltwise', eltwise_mult, output_dim=1)* self.weight_softmax(i, self.nw)
                 else:
-                    att_grid += _1x1_conv('conv_eltwise', eltwise_mult, output_dim =1)* self.swap_weights[i]
+                    att_grid += _1x1_conv('conv_eltwise', eltwise_mult, output_dim =1)* self.weight_softmax(i, self.nw)
 
         att_grid.set_shape(self.att_shape)
         return att_grid
@@ -229,9 +239,9 @@ class Modules:
                 eltwise_mult = tf.nn.l2_normalize(att_maps * text_param_mapped, 3)
                 #att_grid = _1x1_conv('conv_eltwise', eltwise_mult, output_dim=1)
                 if i == 0:
-                    att_grid = _1x1_conv('conv_eltwise', eltwise_mult, output_dim=1) * self.swap_weights[i]
+                    att_grid = _1x1_conv('conv_eltwise', eltwise_mult, output_dim=1) * self.weight_softmax(i, self.nw)
                 else:
-                    att_grid += _1x1_conv('conv_eltwise', eltwise_mult, output_dim=1) * self.swap_weights[i]
+                    att_grid += _1x1_conv('conv_eltwise', eltwise_mult, output_dim=1) * self.weight_softmax(i, self.nw)
 
         att_grid.set_shape(self.att_shape)
         return att_grid
@@ -298,9 +308,9 @@ class Modules:
                 # att_reduced has shape [N, 3]
                 att_reduced = tf.concat([att_min, att_avg, att_max], axis=1)
                 if i == 0:
-                    scores = fc('fc_scores', att_reduced, output_dim=self.num_choices)* self.swap_weights[i]
+                    scores = fc('fc_scores', att_reduced, output_dim=self.num_choices)* self.weight_softmax(i, self.nw)
                 else:
-                    scores += fc('fc_scores', att_reduced, output_dim=self.num_choices)* self.swap_weights[i]
+                    scores += fc('fc_scores', att_reduced, output_dim=self.num_choices)* self.weight_softmax(i, self.nw)
 
         return scores
 
@@ -326,9 +336,9 @@ class Modules:
                 # att_reduced has shape [N, 3]
                 att_concat = tf.concat([att_all, att_min, att_max], axis=1)
                 if i == 0:
-                    scores = fc('fc_scores', att_concat, output_dim=self.num_choices)* self.swap_weights[i]
+                    scores = fc('fc_scores', att_concat, output_dim=self.num_choices)* self.weight_softmax(i, self.nw)
                 else:
-                    scores += fc('fc_scores', att_concat, output_dim=self.num_choices)* self.swap_weights[i]
+                    scores += fc('fc_scores', att_concat, output_dim=self.num_choices)* self.weight_softmax(i, self.nw)
 
         return scores
 
@@ -364,9 +374,9 @@ class Modules:
                                         att_all_1, att_min_1, att_max_1],
                                        axis=1)
                 if i == 0:
-                    scores = fc('fc_scores', att_concat, output_dim=self.num_choices)* self.swap_weights[i]
+                    scores = fc('fc_scores', att_concat, output_dim=self.num_choices)* self.weight_softmax(i, self.nw)
                 else:
-                    scores += fc('fc_scores', att_concat, output_dim=self.num_choices)* self.swap_weights[i]
+                    scores += fc('fc_scores', att_concat, output_dim=self.num_choices)* self.weight_softmax(i, self.nw)
 
         return scores
 
@@ -401,9 +411,9 @@ class Modules:
                                         att_all_1, att_min_1, att_max_1],
                                        axis=1)
                 if i == 0:
-                    scores = fc('fc_scores', att_concat, output_dim=self.num_choices)* self.swap_weights[i]
+                    scores = fc('fc_scores', att_concat, output_dim=self.num_choices)* self.weight_softmax(i, self.nw)
                 else:
-                    scores += fc('fc_scores', att_concat, output_dim=self.num_choices)* self.swap_weights[i]
+                    scores += fc('fc_scores', att_concat, output_dim=self.num_choices)* self.weight_softmax(i, self.nw)
 
         return scores
 
@@ -438,9 +448,9 @@ class Modules:
                                         att_all_1, att_min_1, att_max_1],
                                        axis=1)
                 if i == 0:
-                    scores = fc('fc_scores', att_concat, output_dim=self.num_choices)* self.swap_weights[i]
+                    scores = fc('fc_scores', att_concat, output_dim=self.num_choices)* self.weight_softmax(i, self.nw)
                 else:
-                    scores += fc('fc_scores', att_concat, output_dim=self.num_choices)* self.swap_weights[i]
+                    scores += fc('fc_scores', att_concat, output_dim=self.num_choices)* self.weight_softmax(i, self.nw)
 
         return scores
 
@@ -495,9 +505,9 @@ class Modules:
                 eltwise_mult = tf.nn.l2_normalize(
                     att_feat_mapped_0 * text_param_mapped * att_feat_mapped_1, 1)
                 if i == 0:
-                    scores = fc('fc_eltwise', eltwise_mult, output_dim=self.num_choices)* self.swap_weights[i]
+                    scores = fc('fc_eltwise', eltwise_mult, output_dim=self.num_choices)* self.weight_softmax(i, self.nw)
                 else:
-                    scores += fc('fc_eltwise', eltwise_mult, output_dim=self.num_choices)* self.swap_weights[i]
+                    scores += fc('fc_eltwise', eltwise_mult, output_dim=self.num_choices)* self.weight_softmax(i, self.nw)
 
         return scores
 
@@ -543,8 +553,8 @@ class Modules:
 
                 eltwise_mult = tf.nn.l2_normalize(text_param_mapped * att_feat_mapped, 1)
                 if i == 0:
-                    scores = fc('fc_eltwise', eltwise_mult, output_dim=self.num_choices)* self.swap_weights[i]
+                    scores = fc('fc_eltwise', eltwise_mult, output_dim=self.num_choices)* self.weight_softmax(i, self.nw)
                 else:
-                    scores += fc('fc_eltwise', eltwise_mult, output_dim=self.num_choices)* self.swap_weights[i]
+                    scores += fc('fc_eltwise', eltwise_mult, output_dim=self.num_choices)* self.weight_softmax(i, self.nw)
 
         return scores

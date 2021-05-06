@@ -32,8 +32,6 @@ N = 1
 prune_filter_module = True
 swaps = int(input("num swaps : "))
 exp_name = input("experiment name :")
-nw = input("normalized weights during training? (t/f) : ")
-nw = (nw == "t")
 snapshot_name = "000" + input("step? ") + "0000"
 # tst_image_set = 'trn'
 tst_image_set = 'val'
@@ -82,7 +80,7 @@ nmn3_model_tst = NMN3Model(
     seq_length_batch, T_decoder=T_decoder,
     num_vocab_txt=num_vocab_txt, embed_dim_txt=embed_dim_txt,
     num_vocab_nmn=num_vocab_nmn, embed_dim_nmn=embed_dim_nmn,
-    lstm_dim=lstm_dim, num_layers=num_layers, num_swaps = swaps, nw = nw,
+    lstm_dim=lstm_dim, num_layers=num_layers, num_swaps = swaps, nw = False,
     assembler=assembler,
     encoder_dropout=False,
     decoder_dropout=False,
@@ -100,9 +98,6 @@ batch_idx = tf.constant([0], tf.int32)
 time_idx = tf.placeholder(tf.int32, [1])
 input_0 = tf.placeholder(tf.float32, [1, H_feat, W_feat, 1])
 input_1 = tf.placeholder(tf.float32, [1, H_feat, W_feat, 1])
-
-#for x in tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope = "neural_module_network/layout_execution/"):
-#    print(x.name)
 
 
 # Manually construct each module outside TensorFlow fold for visualization
@@ -182,23 +177,12 @@ def expr2str(expr, indent=4):
     expr_str = name[1:]+('[%d]'%expr['time_idx'])+"("+", ".join(input_str)+")"
     return expr_str
 
-#for x in tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES):
-#    print(x.name)
-
 snapshot_saver = tf.train.Saver(var_list = var_list, max_to_keep=None)  # keep all snapshots
 snapshot_saver.restore(sess, snapshot_file)
-#print(tf.train.list_variables(snapshot_file))
-
-#for x in tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope = "neural_module_network/layout_execution/"):
-#    if "Variable" in x.name:
-#        print(x.name)
 
 for x in tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope = "neural_module_network/layout_execution_1/"):
-    #y = tf.get_variable("neural_module_network/layout_execution/Variable:0")
     for y in tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope = "neural_module_network/layout_execution/Variable"):
         if x.name[-5:] == y.name[-5:]:
-            #print(x.name)
-            #print(y.name)
             assign_op = x.assign(y.eval(session = sess))
             sess.run(assign_op)
 
@@ -213,6 +197,8 @@ def run_visualization(dataset_tst):
     mods_count = Counter()
     answer_word_list = dataset_tst.batch_loader.answer_dict.word_list
     vocab_list = dataset_tst.batch_loader.vocab_dict.word_list
+    most_outputs = np.zeros((1,15))
+    special_outputs = np.zeros((1, num_choices))
     for n, batch in enumerate(dataset_tst.batches()):
         if n >= 100: break
         # set up input and output tensors
@@ -247,7 +233,7 @@ def run_visualization(dataset_tst):
         result, all_output_stack = eval_expr(layout_tokens, image_feat_grid_val, word_vecs_val)
         # check that the results are consistent
         diff = np.max(np.abs(result - scores_val))
-        #assert(np.all(diff < 1e-4))
+        assert(np.all(diff < 1e-4))
 
         encoder_words = [vocab_list[w]
                          for n_w, w in enumerate(batch['input_seq_batch'][:, 0])
@@ -285,10 +271,12 @@ def run_visualization(dataset_tst):
             plt.subplot(4, 3, t+4)
             #print(module_name)
             #print(results.shape)
-            
+
             if results.ndim > 2:
-                plt.imshow(results[..., 0], interpolation='nearest', vmin=-1.5, vmax=1.5, cmap='Reds')
+                sh = results[..., 0]
+                plt.imshow(sh, interpolation='nearest', vmin=-1.5, vmax=1.5, cmap='Reds')
                 plt.axis('off')
+                most_outputs = np.vstack((most_outputs, sh))
                 mods_count[module_name] += 1
                 mods_list[module_name] += entropy(np.exp(results[..., 0]).flatten())
             else:
@@ -297,15 +285,19 @@ def run_visualization(dataset_tst):
                 plot = np.tile(results.reshape((1, num_choices)), (2, 1))
                 plt.imshow(plot, interpolation='nearest', vmin=-1.5, vmax=1.5, cmap='Reds')
                 plt.xticks(range(len(answer_word_list)), answer_word_list, rotation=90)
+                special_outputs = np.vstack((special_outputs, results.reshape((1, num_choices))))
             plt.title('output from '+module_name[1:]+'[%d]'%t)
             plt.colorbar()
 
         plt.savefig(os.path.join(save_dir, '%08d.jpg' % n))
         plt.close('all')
+
+    all_outputs = np.append(most_outputs[1:].flatten(), special_outputs[1:].flatten())
+    np.save(os.path.join(save_dir, 'all_outputs'), all_outputs)
     print("ENTROPIES")
     for m in mods_list:
         print(m)
         print(mods_list[m] / mods_count[m])
 
-run_visualization(data_reader_tst)
 
+run_visualization(data_reader_tst)
